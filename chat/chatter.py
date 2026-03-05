@@ -15,6 +15,9 @@ import uuid
 from service import memory_manager
 from service.memory_manager import get_memory_manager
 from pydantic import BaseModel
+from agent.sql_agent import sqlquery
+from langchain_core.tools import Tool
+from langgraph.prebuilt import ToolNode
 
 llm=ChatTongyi(model="qwen-max")
 
@@ -55,13 +58,17 @@ async def save_new_memory(state:MessagesState):
         await mem_manager.store_memory("global_agent",mem)
     return {"messages":AIMessage(content=f"新保存的记忆:{new_mems.memories}")}
 
+sqlquery_tool=Tool.from_function(
+    func=sqlquery,
+    name="sqlquery_tool",
+    description="输入问题到工具，工具会智能给出综合数据库查询结果的回答"
+)
 
 async def chat(state:MessagesState):
     #printt(f"Received Messages:{state["messages"]}")
-    reply=await llm.ainvoke(get_full_message(state))
-    
-    # ... Analyze conversation and create a new memory
-    
+    llm_with_tools=llm.bind_tools([sqlquery_tool])
+    reply=llm_with_tools.invoke(get_full_message(state))
+
     return {"messages":[reply]}
 
 store = InMemoryStore()
@@ -69,8 +76,23 @@ checkpointer = InMemorySaver()
 builder = StateGraph(MessagesState)
 
 builder.add_node("chat", chat)
-builder.add_edge(START, "chat")
-builder.add_edge("chat", END)
+builder.add_node("save_new_memory",save_new_memory)
+sqlquery_tool_node=ToolNode([sqlquery_tool],name="sqlquery_tool_node")
+builder.add_node("sqlquery_tool_node",sqlquery_tool_node)
+
+def should_continue(state: MessagesState):
+    messages = state["messages"]
+    last_message = messages[-1]
+    if last_message.tool_calls:
+        return "sqlquery_tool_node"
+    else:
+        return END
+
+builder.add_edge(START, "save_new_memory")
+builder.add_edge("save_new_memory","chat")
+builder.add_conditional_edges("chat", should_continue)
+builder.add_edge("sqlquery_tool_node",END)
+
 
 graph = builder.compile(store=store,checkpointer=checkpointer)
 config = {
@@ -89,14 +111,17 @@ async def chatbot():
             config,
             stream_mode="updates",
         ):
-            ai_reply=update["chat"]["messages"][0].content
-            print("AI Reply:\n"+ai_reply)
-
-
+            for node_name, node_output in update.items():
+                printt(f"""
+                节点名称:{node_name}
+                节点输出:{node_output}
+                """)
+                
 async def test():
     input_state = {"messages": [HumanMessage(
         content="我不喜欢吃西红柿")]}
     printt(await save_new_memory(input_state))
 
 if __name__=="__main__":
-    asyncio.run(test())
+    #asyncio.run(test())
+    asyncio.run(chatbot())

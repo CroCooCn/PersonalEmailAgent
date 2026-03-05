@@ -46,7 +46,6 @@ def get_query_prompt(limit:int=5):
     query_system_prompt = """
     你是一个"个人邮件智能体"中负责与数据库交互的子智能体。
     给你一个和邮件相关的问题，你需要给出对应的postgres查询语句。
-    你需要查出前{limit}条数据。
     请调用"run_query"工具进行SQL查询。
     如果你发现已经没有必要的查询，就不调用工具。
     以下是数据库表结构:
@@ -59,7 +58,6 @@ def get_query_prompt(limit:int=5):
     tag_defs=get_cached_tag_definitions()
     query_system_prompt=query_system_prompt.format(
         table_structure=table_structure,
-        limit=limit,
         tag_defs=tag_defs
     )
     return query_system_prompt
@@ -105,7 +103,7 @@ def should_continue(state: SQLAgentState) -> Literal[END, "check_query"]:
     else:
         return "check_query"
 
-def query(question:str=""):
+def sqlquery(question:str=""):
 
     builder = StateGraph(SQLAgentState)
     builder.add_node(generate_query,"generate_query")
@@ -122,18 +120,17 @@ def query(question:str=""):
 
     agent = builder.compile()
 
-    for step in agent.stream(
-        {"messages": [{"role": "user", "content": question}]},
-        stream_mode="values",
-    ):
-        print_with_gap(step["messages"][-1])
+    result=agent.invoke({"messages": [{"role": "user", "content": question}]})
+    return result["messages"][-1].content
 
 
 if __name__=="__main__":
     #print(asyncio.run(load_tag_definitions()))
     #print_with_gap(get_query_prompt())
-    query("""
+    '''
+    sqlquery("""
     新增一个标签，名字叫"mood"，取值有"happy","sad","no"
     三种，描述是"邮件内容包含的情绪"，启用该标签。
     """)
-    #query("帮我查所有重要程度为中等的邮件")
+    '''
+    #print(sqlquery("帮我查所有重要程度为中等的邮件"))
